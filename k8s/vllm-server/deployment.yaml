@@ -24,7 +24,7 @@ spec:
           - |
             python3 -m vllm.entrypoints.openai.api_server \
               --model google/gemma-3-4b-it \
-              --gpu-memory-utilization 0.95 \
+              --gpu-memory-utilization 0.85 \
               --max-model-len 2048 \
               --enforce-eager \
               --trust-remote-code
