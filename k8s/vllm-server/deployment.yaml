@@ -15,6 +15,7 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/hostname: worker-home
+      runtimeClassName: nvidia
       containers:
       - name: vllm
         image: vllm/vllm-openai:latest
@@ -35,9 +36,11 @@ spec:
               key: token
         resources:
           limits:
-            nvidia.com/gpu: 1
+            cpu: "8"
+            memory: "16Gi"
           requests:
-            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "8Gi"
         volumeMounts:
         - name: cache-volume
           mountPath: /root/.cache/huggingface
