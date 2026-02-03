@@ -46,14 +46,19 @@ app.post('/api/chat', async (req, res) => {
         let prompt = req.body.prompt;
         const context = await getContext(prompt);
 
+        // Refined personality-driven prompt
         if (context) {
-            prompt = `Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Keep the answer concise.
-            
-Context:
+            prompt = `당신은 사용자의 질문에 친절하고 상세하게 답변하는 유능한 AI 어시스턴트입니다. 
+아래에 제공된 [참고 문맥]이 질문과 관련이 있다면 이를 적극 활용하여 답변을 구성해 주세요. 
+만약 문맥에 직접적인 답이 없더라도, 당신이 가진 지식을 총동원하여 자연스럽고 풍부하게 대화를 이어가 주세요. 
+단순히 문맥을 반복하기보다는 당신의 언어로 친절하게 설명해 주는 것이 중요합니다.
+답변은 반드시 한국어로 작성해 주세요.
+
+[참고 문맥]
 ${context}
 
-Question: ${prompt}
-Answer:`;
+[사용자 질문]: ${prompt}
+[AI 답변]:`;
         }
 
         const response = await axios({
