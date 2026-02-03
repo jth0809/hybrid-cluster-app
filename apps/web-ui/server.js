@@ -15,7 +15,7 @@ app.post('/api/chat', async (req, res) => {
             method: 'post',
             url: `${SLM_URL}/v1/chat/completions`, // OpenAI compatible endpoint
             data: {
-                model: 'google/gemma-3-4b-it',
+                model: 'google/gemma-3-1b-it',
                 messages: [{ role: 'user', content: req.body.prompt }],
                 stream: true
             },
