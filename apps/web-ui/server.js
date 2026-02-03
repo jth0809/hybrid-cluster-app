@@ -4,19 +4,64 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SLM_URL = process.env.SLM_URL || 'http://vllm-server:8000'; // Changed to vllm-server
+const SLM_URL = process.env.SLM_URL || 'http://vllm-server:8000';
+const EMBEDDING_URL = process.env.EMBEDDING_URL || 'http://embedding-service:8000';
+const QDRANT_URL = process.env.QDRANT_URL || 'http://qdrant:6333';
+const COLLECTION_NAME = 'knowledge_base';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+async function getContext(query) {
+    try {
+        console.log(`Getting context for: ${query}`);
+        // 1. Get embedding
+        const embRes = await axios.post(`${EMBEDDING_URL}/v1/embeddings`, {
+            input: query,
+            model: 'all-MiniLM-L6-v2'
+        });
+        const vector = embRes.data.data[0].embedding;
+
+        // 2. Search Qdrant
+        const searchRes = await axios.post(`${QDRANT_URL}/collections/${COLLECTION_NAME}/points/search`, {
+            vector: vector,
+            limit: 3,
+            with_payload: true
+        });
+
+        const context = searchRes.data.result
+            .map(r => r.payload.text)
+            .join('\n\n');
+
+        console.log(`Retrieved context length: ${context.length}`);
+        return context;
+    } catch (e) {
+        console.warn('RAG retrieval failed, falling back to basic chat:', e.message);
+        return '';
+    }
+}
+
 app.post('/api/chat', async (req, res) => {
     try {
+        let prompt = req.body.prompt;
+        const context = await getContext(prompt);
+
+        if (context) {
+            prompt = `Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Keep the answer concise.
+            
+Context:
+${context}
+
+Question: ${prompt}
+Answer:`;
+        }
+
         const response = await axios({
             method: 'post',
-            url: `${SLM_URL}/v1/chat/completions`, // OpenAI compatible endpoint
+            url: `${SLM_URL}/v1/chat/completions`,
             data: {
                 model: 'google/gemma-3-1b-it',
-                messages: [{ role: 'user', content: req.body.prompt }],
+                messages: [{ role: 'user', content: prompt }],
                 stream: true
             },
             responseType: 'stream'
