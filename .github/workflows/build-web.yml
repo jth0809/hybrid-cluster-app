@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'apps/web-ui/**'
+      - '.github/workflows/build-web.yml'
+      - 'k8s/web-ui/**'
 
 env:
   REGISTRY: ghcr.io
