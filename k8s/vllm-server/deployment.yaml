@@ -24,8 +24,8 @@ spec:
           - |
             python3 -m vllm.entrypoints.openai.api_server \
               --model google/gemma-3-4b-it \
-              --gpu-memory-utilization 0.8 \
-              --max-model-len 4096 \
+              --gpu-memory-utilization 0.95 \
+              --max-model-len 2048 \
               --enforce-eager \
               --trust-remote-code
         env:
@@ -39,10 +39,10 @@ spec:
         resources:
           limits:
             cpu: "8"
-            memory: "16Gi"
+            memory: "24Gi"
           requests:
             cpu: "4"
-            memory: "8Gi"
+            memory: "16Gi"
         volumeMounts:
         - name: cache-volume
           mountPath: /root/.cache/huggingface
