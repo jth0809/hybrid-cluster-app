@@ -15,6 +15,10 @@ spec:
     spec:
       nodeSelector:
         kubernetes.io/hostname: master-oci
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
       - name: web-ui
         image: ghcr.io/jth0809/hybrid-web-ui:latest
