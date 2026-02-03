@@ -34,6 +34,8 @@ spec:
             secretKeyRef:
               name: hf-token
               key: token
+        - name: LD_LIBRARY_PATH
+          value: /usr/lib/wsl/lib
         resources:
           limits:
             cpu: "8"
@@ -44,11 +46,21 @@ spec:
         volumeMounts:
         - name: cache-volume
           mountPath: /root/.cache/huggingface
+        - name: wsl-lib
+          mountPath: /usr/lib/wsl/lib
+        - name: dev-dxg
+          mountPath: /dev/dxg
       volumes:
       - name: cache-volume
         hostPath:
           path: /home/user/vllm-cache
           type: DirectoryOrCreate
+      - name: wsl-lib
+        hostPath:
+          path: /usr/lib/wsl/lib
+      - name: dev-dxg
+        hostPath:
+          path: /dev/dxg
 ---
 apiVersion: v1
 kind: Service
