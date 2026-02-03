@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-server
+  template:
+    metadata:
+      labels:
+        app: vllm-server
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: worker-home
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            python3 -m vllm.entrypoints.openai.api_server \
+              --model google/gemma-3-4b-it \
+              --gpu-memory-utilization 0.8 \
+              --max-model-len 4096 \
+              --enforce-eager \
+              --trust-remote-code
+        env:
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: token
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+          requests:
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /root/.cache/huggingface
+      volumes:
+      - name: cache-volume
+        hostPath:
+          path: /home/user/vllm-cache
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-server
+spec:
+  selector:
+    app: vllm-server
+  ports:
+  - port: 8000
+    targetPort: 8000

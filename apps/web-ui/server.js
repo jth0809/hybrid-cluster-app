@@ -4,7 +4,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SLM_URL = process.env.SLM_URL || 'http://slm-server:11434';
+const SLM_URL = process.env.SLM_URL || 'http://vllm-server:8000'; // Changed to vllm-server
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -13,10 +13,10 @@ app.post('/api/chat', async (req, res) => {
     try {
         const response = await axios({
             method: 'post',
-            url: `${SLM_URL}/api/generate`,
+            url: `${SLM_URL}/v1/chat/completions`, // OpenAI compatible endpoint
             data: {
-                model: 'llama3',
-                prompt: req.body.prompt,
+                model: 'google/gemma-3-4b-it',
+                messages: [{ role: 'user', content: req.body.prompt }],
                 stream: true
             },
             responseType: 'stream'
@@ -29,18 +29,22 @@ app.post('/api/chat', async (req, res) => {
         response.data.on('data', chunk => {
             const lines = chunk.toString().split('\n');
             lines.forEach(line => {
-                if (!line.trim()) return;
-                try {
-                    const json = JSON.parse(line);
-                    if (json.response) {
-                        res.write(`data: ${JSON.stringify({ token: json.response })}\n\n`);
-                    }
-                    if (json.done) {
+                if (!line.trim() || line === 'data: [DONE]') {
+                    if (line === 'data: [DONE]') {
                         res.write('data: [DONE]\n\n');
                         res.end();
                     }
+                    return;
+                }
+                try {
+                    const jsonStr = line.replace(/^data: /, '');
+                    const json = JSON.parse(jsonStr);
+                    const token = json.choices[0].delta.content;
+                    if (token) {
+                        res.write(`data: ${JSON.stringify({ token })}\n\n`);
+                    }
                 } catch (e) {
-                    console.error('Error parsing Ollama stream chunk:', e.message);
+                    // Ignore parsing errors for empty/malformed lines
                 }
             });
         });
