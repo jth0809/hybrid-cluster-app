@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     bash \
     build-essential \
     python3 \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # OpenClaw 전역 설치 (권한 문제 방지)
