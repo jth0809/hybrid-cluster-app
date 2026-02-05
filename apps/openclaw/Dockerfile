@@ -12,7 +12,16 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     python3 \
     cmake \
+    clang \
+    pkg-config \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
+
+# Python 3 심볼릭 링크 생성 (빌드 스크립트 호환성)
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# npm 최신 버전 업데이트
+RUN npm install -g npm@latest
 
 # OpenClaw 전역 설치 (권한 문제 방지)
 RUN npm install -g openclaw@latest --unsafe-perm=true --allow-root
