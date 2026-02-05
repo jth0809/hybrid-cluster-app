@@ -9,10 +9,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     bash \
+    build-essential \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# OpenClaw 전역 설치
-RUN npm install -g openclaw@latest
+# OpenClaw 전역 설치 (권한 문제 방지)
+RUN npm install -g openclaw@latest --unsafe-perm=true --allow-root
 
 # OpenClaw 설정 디렉토리 생성
 RUN mkdir -p /root/.openclaw/workspace
