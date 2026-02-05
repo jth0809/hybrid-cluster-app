@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-worker
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw-worker
+  template:
+    metadata:
+      labels:
+        app: openclaw-worker
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/worker: "true" # worker-home 노드로 유도
+      containers:
+      - name: openclaw
+        image: ghcr.io/jth0809/openclaw-agent:latest
+        env:
+        - name: OPENCLAW_PORT
+          value: "18789"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /root/.openclaw/openclaw.json
+          subPath: openclaw.json
+        - name: workspace-volume
+          mountPath: /root/.openclaw/workspace
+      volumes:
+      - name: config-volume
+        configMap:
+          name: openclaw-config
+      - name: workspace-volume
+        hostPath:
+          path: /mnt/openclaw_worker_workspace
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-worker
+spec:
+  selector:
+    app: openclaw-worker
+  ports:
+  - port: 18789
+    targetPort: 18789

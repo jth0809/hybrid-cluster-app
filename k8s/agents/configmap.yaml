@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-config
+  namespace: default
+data:
+  openclaw.json: |
+    {
+      "agent": {
+        "model": "openai/google/gemma-3-1b-it",
+        "baseURL": "http://vllm-server:8000/v1",
+        "apiKey": "none"
+      },
+      "agents": {
+        "defaults": {
+          "workspace": "/root/.openclaw/workspace",
+          "sandbox": {
+            "mode": "none"
+          }
+        }
+      }
+    }

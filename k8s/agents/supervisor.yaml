@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-supervisor
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw-supervisor
+  template:
+    metadata:
+      labels:
+        app: openclaw-supervisor
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/master: "" # OCI 마스터 노드에 배치
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: openclaw
+        image: ghcr.io/jth0809/openclaw-agent:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # 슈퍼바이저 로직: 워커 로그 감시 (임시로 kubectl logs 활용)
+            # 실제 운영 환경에선 전용 모니터링 에이전트 스킬 구현 필요
+            openclaw gateway --port 18790 --verbose
+        env:
+        - name: OPENCLAW_PORT
+          value: "18790"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /root/.openclaw/openclaw.json
+          subPath: openclaw.json
+      volumes:
+      - name: config-volume
+        configMap:
+          name: openclaw-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-supervisor
+spec:
+  selector:
+    app: openclaw-supervisor
+  ports:
+  - port: 18790
+    targetPort: 18790
