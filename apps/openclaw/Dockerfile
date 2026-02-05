@@ -1,24 +1,25 @@
 # Node.js 22 LTS (Bullseye) 사용
-FROM node:22-bullseye
+# Node.js 22 (Bookworm) 사용 - CMake 3.25+ 및 최신 glibc 포함
+FROM node:22-bookworm
 
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# 시스템 의존성 설치 (필요한 경우)
+# 시스템 의존성 설치
+# node-llama-cpp 빌드를 위한 필수 도구들 (Bookworm 기준)
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     bash \
     build-essential \
     python3 \
+    python-is-python3 \
     cmake \
     clang \
     pkg-config \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# Python 3 심볼릭 링크 생성 (빌드 스크립트 호환성)
-RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # npm 최신 버전 업데이트
 RUN npm install -g npm@latest
