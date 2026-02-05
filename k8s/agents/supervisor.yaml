@@ -14,7 +14,7 @@ spec:
         app: openclaw-supervisor
     spec:
       nodeSelector:
-        node-role.kubernetes.io/master: "" # OCI 마스터 노드에 배치
+        node-role.kubernetes.io/control-plane: "" # OCI 마스터 노드에 배치
       tolerations:
       - key: "node-role.kubernetes.io/control-plane"
         operator: "Exists"
