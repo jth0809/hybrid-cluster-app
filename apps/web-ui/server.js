@@ -18,7 +18,7 @@ async function getContext(query) {
         // 1. Get embedding
         const embRes = await axios.post(`${EMBEDDING_URL}/v1/embeddings`, {
             input: query,
-            model: 'all-MiniLM-L6-v2'
+            model: 'paraphrase-multilingual-MiniLM-L12-v2'
         });
         const vector = embRes.data.data[0].embedding;
 
@@ -43,31 +43,37 @@ async function getContext(query) {
 
 app.post('/api/chat', async (req, res) => {
     try {
-        let prompt = req.body.prompt;
-        const context = await getContext(prompt);
+        const userPrompt = req.body.prompt;
+        const context = await getContext(userPrompt);
 
-        // Refined personality-driven prompt
+        const messages = [
+            {
+                role: 'system',
+                content: '당신은 유능한 한국어 AI 어시스턴트입니다. 모든 답변을 반드시 한국어로 작성하십시오.'
+            }
+        ];
+
+        let userContent = "";
         if (context) {
-            prompt = `당신은 사용자의 질문에 친절하고 상세하게 답변하는 유능한 AI 어시스턴트입니다. 
-아래에 제공된 [참고 문맥]이 질문과 관련이 있다면 이를 적극 활용하여 답변을 구성해 주세요. 
-만약 문맥에 직접적인 답이 없더라도, 당신이 가진 지식을 총동원하여 자연스럽고 풍부하게 대화를 이어가 주세요. 
-단순히 문맥을 반복하기보다는 당신의 언어로 친절하게 설명해 주는 것이 중요합니다.
-답변은 반드시 한국어로 작성해 주세요.
-
-[참고 문맥]
-${context}
-
-[사용자 질문]: ${prompt}
-[AI 답변]:`;
+            userContent = `[참고 문맥]\n${context}\n\n[사용자 질문]\n${userPrompt}\n\n위 [참고 문맥]을 활용하여 질문에 답변해 주세요. 답변은 반드시 한국어로 작성해야 합니다.`;
+        } else {
+            userContent = `${userPrompt}\n\n답변은 반드시 한국어로 작성해 주세요.`;
         }
+
+        messages.push({
+            role: 'user',
+            content: userContent
+        });
 
         const response = await axios({
             method: 'post',
             url: `${SLM_URL}/v1/chat/completions`,
             data: {
-                model: 'google/gemma-3-1b-it',
-                messages: [{ role: 'user', content: prompt }],
-                stream: true
+                model: 'gemma',
+                messages: messages,
+                stream: true,
+                temperature: 0.3, // Lower temperature for more consistent language adherence
+                max_tokens: 1024
             },
             responseType: 'stream'
         });
@@ -94,14 +100,14 @@ ${context}
                         res.write(`data: ${JSON.stringify({ token })}\n\n`);
                     }
                 } catch (e) {
-                    // Ignore parsing errors for empty/malformed lines
+                    // Ignore parsing errors
                 }
             });
         });
 
     } catch (error) {
-        console.error('Error communicating with sLM:', error.message);
-        res.status(500).json({ error: 'Failed to communicate with sLM server' });
+        console.error('Error in /api/chat:', error.message);
+        res.status(500).json({ error: 'Model service error' });
     }
 });
 
