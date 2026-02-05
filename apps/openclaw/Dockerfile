@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y \
 RUN npm install -g npm@latest
 
 # OpenClaw 전역 설치 (권한 문제 방지)
-RUN npm install -g openclaw@latest --unsafe-perm=true --allow-root
+RUN npm install -g openclaw@latest
 
 # OpenClaw 설정 디렉토리 생성
 RUN mkdir -p /root/.openclaw/workspace
