@@ -69,7 +69,7 @@ app.post('/api/chat', async (req, res) => {
             method: 'post',
             url: `${SLM_URL}/v1/chat/completions`,
             data: {
-                model: 'gemma',
+                model: 'qwen',
                 messages: messages,
                 stream: true,
                 temperature: 0.3, // Lower temperature for more consistent language adherence
