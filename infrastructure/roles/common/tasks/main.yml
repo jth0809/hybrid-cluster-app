@@ -1,0 +1,18 @@
+# roles/common/tasks/main.yml
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install Common Utilities
+  apt:
+    name:
+      - curl
+      - git
+      - jq
+    state: present
+
+- name: Check global config for Network Mode
+  debug:
+    msg: "Network Mode is: {{ cluster.network_mode }}"

@@ -1,8 +1,9 @@
+{{- if .Values.components.vllm.enabled -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-server
-  namespace: default
+  namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
   selector:
@@ -13,8 +14,8 @@ spec:
       labels:
         app: vllm-server
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: worker-home
+      # nodeSelector:
+      #   kubernetes.io/hostname: worker-home
       runtimeClassName: nvidia
       containers:
       - name: vllm
@@ -47,6 +48,9 @@ spec:
           limits:
             cpu: "8"
             memory: "24Gi"
+            {{- if .Values.components.vllm.gpu.enabled }}
+            nvidia.com/gpu: {{ .Values.components.vllm.gpu.count }}
+            {{- end }}
           requests:
             cpu: "4"
             memory: "12Gi"
@@ -73,9 +77,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: vllm-server
+  namespace: {{ .Release.Namespace }}
 spec:
   selector:
     app: vllm-server
   ports:
   - port: 8000
     targetPort: 8000
+{{- end -}}

@@ -1,0 +1,269 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aiops-supervisor
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-supervisor-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "services", "nodes"]
+  verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aiops-supervisor-binding
+subjects:
+- kind: ServiceAccount
+  name: aiops-supervisor
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: aiops-supervisor-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: universal-agent-code
+  namespace: default
+data:
+  requirements.txt: |
+    kubernetes
+    openai
+    qdrant-client
+    requests
+    termcolor
+  
+  main.py: |
+    import os
+    import time
+    import sys
+    from termcolor import cprint
+    # Mocking module structure by adding local dir to path if needed
+    sys.path.append("/app")
+    
+    from roles.supervisor import SupervisorAgent
+    from roles.worker import WorkerAgent
+
+    def main():
+        role = os.getenv("AGENT_ROLE", "worker").lower()
+        cprint(f"🤖 Universal Agent Starting... ROLE=[{role.upper()}]", "cyan", attrs=["bold"])
+
+        agent = None
+        if role == "supervisor":
+            agent = SupervisorAgent()
+        elif role == "worker":
+            agent = WorkerAgent()
+        else:
+            cprint(f"❌ Unknown Agent Role: {role}", "red")
+            sys.exit(1)
+
+        try:
+            agent.run()
+        except KeyboardInterrupt:
+            cprint("\n🛑 Agent stopping...", "yellow")
+        except Exception as e:
+            cprint(f"\n🔥 Critical Error: {e}", "red")
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()
+
+  base.py: |
+    import time
+    from termcolor import cprint
+
+    class BaseAgent:
+        def __init__(self, name="Agent"):
+            self.name = name
+
+        def log(self, message, color="white"):
+            cprint(f"[{self.name}] {message}", color)
+
+        def run(self):
+            raise NotImplementedError
+
+  supervisor.py: |
+    import time
+    from kubernetes import client, config, watch
+    from roles.base import BaseAgent
+
+    class SupervisorAgent(BaseAgent):
+        def __init__(self):
+            super().__init__(name="Supervisor")
+            try:
+                # Try in-cluster config first
+                try:
+                    config.load_incluster_config()
+                except:
+                    config.load_kube_config()
+                    
+                self.v1 = client.CoreV1Api()
+                self.log("Connected to Kubernetes API.", "cyan")
+            except Exception as e:
+                self.log(f"Failed to connect to K8s API: {e}", "red")
+                self.v1 = None
+
+        def run(self):
+            self.log("Starting Surveillance Mode...", "cyan")
+            if not self.v1:
+                while True:
+                    self.log("Waiting for K8s API connection...", "yellow")
+                    time.sleep(10)
+
+            # Simple Watch Loop
+            w = watch.Watch()
+            # In a real app, handle timeouts/reconnects
+            try:
+                for event in w.stream(self.v1.list_pod_for_all_namespaces):
+                    pod = event['object']
+                    phase = pod.status.phase
+                    name = pod.metadata.name
+                    
+                    if "worker" in name:
+                        if phase == "Running":
+                            pass # Noisy
+                            # self.log(f"Verified Worker {name} is Active.", "blue")
+                        elif phase in ["Failed", "Unknown"]:
+                            self.log(f"⚠️ DETECTED FAILURE: Worker {name} is in {phase} state!", "red")
+            except Exception as e:
+                self.log(f"Watch stream ended: {e}", "red")
+
+  worker.py: |
+    import time
+    import random
+    import os
+    from roles.base import BaseAgent
+
+    class WorkerAgent(BaseAgent):
+        def __init__(self):
+            # Identify self by hostname (Pod Name)
+            self.pod_name = os.getenv("HOSTNAME", "unknown-worker")
+            super().__init__(name=f"Worker-{self.pod_name}")
+        
+        def run(self):
+            self.log("Initialized. Joining fleet...", "green")
+            while True:
+                # Simulate work
+                self.log(f"Reporting status: Healthy. Load: {random.randint(1,10)}%", "green")
+                time.sleep(30)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-supervisor
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiops-supervisor
+  template:
+    metadata:
+      labels:
+        app: aiops-supervisor
+    spec:
+      serviceAccountName: aiops-supervisor
+      initContainers:
+      - name: install-deps
+        image: python:3.10-slim
+        command: ["sh", "-c", "pip install --target=/app/deps -r /source/requirements.txt"]
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      containers:
+      - name: supervisor
+        image: python:3.10-slim
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AGENT_ROLE
+          value: "supervisor"
+        - name: PYTHONPATH
+          value: "/app/deps:/app"
+        command: ["sh", "-c"]
+        args:
+        - |
+          mkdir -p /app/roles
+          cp /source/main.py /app/
+          cp /source/base.py /app/roles/
+          cp /source/supervisor.py /app/roles/
+          cp /source/worker.py /app/roles/
+          # Create init files for packages
+          touch /app/roles/__init__.py
+          
+          python /app/main.py
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      volumes:
+      - name: code-volume
+        configMap:
+          name: universal-agent-code
+      - name: deps-volume
+        emptyDir: {}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: worker-agent
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: worker-agent
+  template:
+    metadata:
+      labels:
+        app: worker-agent
+    spec:
+      initContainers:
+      - name: install-deps
+        image: python:3.10-slim
+        command: ["sh", "-c", "pip install --target=/app/deps -r /source/requirements.txt"]
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      containers:
+      - name: worker
+        image: python:3.10-slim
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AGENT_ROLE
+          value: "worker"
+        - name: PYTHONPATH
+          value: "/app/deps:/app"
+        command: ["sh", "-c"]
+        args:
+        - |
+          mkdir -p /app/roles
+          cp /source/main.py /app/
+          cp /source/base.py /app/roles/
+          cp /source/supervisor.py /app/roles/
+          cp /source/worker.py /app/roles/
+          touch /app/roles/__init__.py
+          
+          python /app/main.py
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      volumes:
+      - name: code-volume
+        configMap:
+          name: universal-agent-code
+      - name: deps-volume
+        emptyDir: {}

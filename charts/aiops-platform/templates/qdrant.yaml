@@ -1,0 +1,42 @@
+{{- if .Values.components.qdrant.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+      - name: qdrant
+        image: qdrant/qdrant:latest
+        ports:
+        - containerPort: 6333
+        - containerPort: 6334
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+      volumes:
+      - name: qdrant-storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: qdrant
+  ports:
+  - protocol: TCP
+    port: 6333
+    targetPort: 6333
+{{- end -}}

@@ -5,19 +5,41 @@ metadata:
   namespace: default
 data:
   openclaw.json: |
+    {
+      "gateway": {
+        "mode": "local",
+        "auth": {
+          "token": "test-token"
+        }
+      },
       "agents": {
         "defaults": {
+          "model": {
+            "primary": "vllm/qwen"
+          },
           "models": {
-            "primary": "openai/google/gemma-3-1b-it",
-            "fallbacks": []
+            "vllm/qwen": {
+              "alias": "Qwen2.5-3B"
+            }
           },
-          "llm": {
-            "baseURL": "http://vllm-server:8000/v1",
-            "apiKey": "none"
-          },
-          "workspace": "/root/.openclaw/workspace",
-          "sandbox": {
-            "mode": "none"
+          "workspace": "/root/.openclaw/workspace"
+        }
+      },
+      "models": {
+        "mode": "merge",
+        "providers": {
+          "vllm": {
+            "api": "openai-completions",
+            "baseUrl": "http://sniffer:8001/v1",
+            "apiKey": "sk-test",
+            "models": [
+              {
+                "id": "qwen",
+                "name": "qwen",
+                "contextWindow": 32768,
+                "maxTokens": 4096
+              }
+            ]
           }
         }
       }

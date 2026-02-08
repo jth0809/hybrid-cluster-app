@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-brain
+  namespace: interactive-test
+  labels:
+    app: mock-brain
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-brain
+  template:
+    metadata:
+      labels:
+        app: mock-brain
+    spec:
+      initContainers:
+      - name: install-deps
+        image: "python:3.10-slim"
+        command: ["sh", "-c", "pip install --target=/app/deps -r /source/requirements.txt"]
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      containers:
+      - name: mock-brain
+        image: "python:3.10-slim"
+        # Wait, chart image is defined in values.yaml. 
+        # I'll use the image from values.yaml or assume localhost:5000/universal-agent
+        # But I don't know the exact image tag used in cluster.
+        # I'll check what Supervisor uses.
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AGENT_ROLE
+          value: "mock-brain"
+        - name: PYTHONPATH
+          value: "/app/deps:/app"
+        command: ["sh", "-c"]
+        args:
+        - |
+          mkdir -p /app/roles
+          cp /source/main.py /app/
+          cp /source/base.py /app/roles/
+          cp /source/supervisor.py /app/roles/
+          cp /source/worker.py /app/roles/
+          cp /source/mock_brain.py /app/roles/
+          touch /app/roles/__init__.py
+          python /app/main.py
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      volumes:
+      - name: code-volume
+        configMap:
+          name: universal-agent-code
+      - name: deps-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-brain
+  namespace: interactive-test
+spec:
+  selector:
+    app: mock-brain
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+

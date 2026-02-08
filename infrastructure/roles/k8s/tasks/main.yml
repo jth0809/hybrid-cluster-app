@@ -1,0 +1,153 @@
+# roles/k8s/tasks/main.yml
+# Uses kubeadm (NOT K3s) to match the existing production cluster.
+---
+- name: Determine Node Type
+  set_fact:
+    node_type: "{{ 'master' if inventory_hostname in groups['masters'] else 'worker' }}"
+
+# COMMON SETUP (All Nodes)
+- name: Install Prerequisites
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+
+- name: Add Kubernetes apt key
+  shell: |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes apt repository
+  copy:
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /
+    dest: /etc/apt/sources.list.d/kubernetes.list
+  register: k8s_repo
+
+- name: Update apt cache after adding K8s repo
+  apt:
+    update_cache: yes
+  when: k8s_repo.changed
+
+- name: Install kubeadm, kubelet, kubectl
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Hold kubelet, kubeadm, kubectl at current version
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Disable swap (required for kubelet)
+  shell: swapoff -a
+  changed_when: false
+
+- name: Remove swap from fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '.*swap.*'
+    state: absent
+
+# GPU Support (NVIDIA)
+- name: Add NVIDIA Container Toolkit GPG Key
+  shell: |
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+- name: Add NVIDIA Container Toolkit Repository
+  shell: |
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  args:
+    creates: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+- name: Install NVIDIA Container Toolkit
+  apt:
+    name: nvidia-container-toolkit
+    state: present
+    update_cache: yes
+
+- name: Configure containerd for NVIDIA
+  shell: |
+    nvidia-ctk runtime configure --runtime=docker --set-as-default
+    sudo systemctl restart containerd
+  when: node_type == 'worker' or node_type == 'master' # Apply to all nodes that might have GPUs
+  ignore_errors: yes # Ignore if no GPU/driver present during bootstrapping
+
+- name: Load kernel modules for containerd
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Set sysctl for Kubernetes networking
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    state: present
+    reload: yes
+  loop:
+    - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { name: 'net.ipv4.ip_forward', value: '1' }
+
+# MASTER LOGIC
+- name: (Master) Initialize Kubernetes Cluster
+  shell: |
+    kubeadm init \
+      --pod-network-cidr=10.244.0.0/16 \
+      --skip-phases=addon/kube-proxy \
+      --apiserver-advertise-address={{ ansible_host }}
+  args:
+    creates: /etc/kubernetes/admin.conf
+  when: node_type == 'master'
+  register: kubeadm_init
+
+- name: (Master) Setup kubeconfig for root user
+  shell: |
+    mkdir -p /root/.kube
+    cp /etc/kubernetes/admin.conf /root/.kube/config
+    chown root:root /root/.kube/config
+  when: node_type == 'master' and kubeadm_init.changed
+
+- name: (Master) Setup kubeconfig for ubuntu user
+  shell: |
+    mkdir -p /home/ubuntu/.kube
+    cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+    chown -R ubuntu:ubuntu /home/ubuntu/.kube
+  when: node_type == 'master' and kubeadm_init.changed
+  ignore_errors: yes
+
+- name: (Master) Generate join command
+  shell: kubeadm token create --print-join-command
+  register: join_command
+  when: node_type == 'master'
+
+- name: (Master) Store join command
+  set_fact:
+    kubeadm_join_command: "{{ join_command.stdout }}"
+  when: node_type == 'master'
+
+# WORKER LOGIC
+- name: (Worker) Join the cluster
+  shell: "{{ hostvars[groups['masters'][0]]['kubeadm_join_command'] }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  when: node_type == 'worker'

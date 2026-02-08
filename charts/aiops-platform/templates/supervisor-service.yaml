@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-supervisor
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: aiops-supervisor
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+    name: webhook

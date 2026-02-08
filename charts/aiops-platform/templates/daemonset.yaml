@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: worker-agent
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: worker-agent
+  template:
+    metadata:
+      labels:
+        app: worker-agent
+        aiops.io/supervised: "true"
+    spec:
+      initContainers:
+      - name: install-deps
+        image: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag }}"
+        command: ["sh", "-c", "pip install --target=/app/deps -r /source/requirements.txt"]
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      containers:
+      - name: worker
+        image: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag }}"
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AGENT_ROLE
+          value: "worker"
+        - name: PYTHONPATH
+          value: "/app/deps:/app"
+        - name: QDRANT_HOST
+          value: "qdrant.{{ .Release.Namespace }}:6333"
+        - name: VLLM_HOST
+          value: "vllm-server.{{ .Release.Namespace }}:8000"
+        - name: EMBEDDING_HOST
+          value: "embedding-service.default:8000"
+        command: ["sh", "-c"]
+        args:
+        - |
+          mkdir -p /app/roles
+          cp /source/main.py /app/
+          cp /source/base.py /app/roles/
+          cp /source/supervisor.py /app/roles/
+          cp /source/worker.py /app/roles/
+          cp /source/mock_brain.py /app/roles/
+          cp /source/agent_cli.py /app/
+          touch /app/roles/__init__.py
+          python /app/main.py
+        resources:
+          limits:
+            memory: {{ .Values.agents.worker.memory }}
+            cpu: {{ .Values.agents.worker.cpu }}
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      volumes:
+      - name: code-volume
+        configMap:
+          name: universal-agent-code
+      - name: deps-volume
+        emptyDir: {}

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-supervisor
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiops-supervisor
+  template:
+    metadata:
+      labels:
+        app: aiops-supervisor
+    spec:
+      serviceAccountName: aiops-supervisor
+      initContainers:
+      - name: install-deps
+        image: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag }}"
+        command: ["sh", "-c", "pip install --target=/app/deps -r /source/requirements.txt"]
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      containers:
+      - name: supervisor
+        image: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag }}"
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AGENT_ROLE
+          value: "supervisor"
+        - name: PYTHONPATH
+          value: "/app/deps:/app"
+        - name: QDRANT_HOST
+          value: "qdrant.{{ .Release.Namespace }}:6333"
+        - name: VLLM_HOST
+          value: "{{ .Values.rag.vllm_host }}"
+        - name: VLLM_MODEL
+          value: {{ .Values.agents.supervisor.model | default "qwen" | quote }}
+        - name: VLLM_TEMP
+          value: {{ .Values.agents.supervisor.temperature | default "0.1" | quote }}
+        - name: MONITOR_LABEL
+          value: "aiops.io/supervised=true"
+        command: ["sh", "-c"]
+        args:
+        - |
+          mkdir -p /app/roles
+          cp /source/main.py /app/
+          cp /source/base.py /app/roles/
+          cp /source/supervisor.py /app/roles/
+          cp /source/worker.py /app/roles/
+          cp /source/mock_brain.py /app/roles/
+          touch /app/roles/__init__.py
+          python /app/main.py
+        ports:
+        - containerPort: 8080
+          name: webhook
+        resources:
+          limits:
+            memory: {{ .Values.agents.supervisor.memory }}
+            cpu: {{ .Values.agents.supervisor.cpu }}
+        volumeMounts:
+        - name: code-volume
+          mountPath: /source
+        - name: deps-volume
+          mountPath: /app/deps
+      volumes:
+      - name: code-volume
+        configMap:
+          name: universal-agent-code
+      - name: deps-volume
+        emptyDir: {}

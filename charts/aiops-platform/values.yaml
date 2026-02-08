@@ -1,0 +1,36 @@
+# Default values for aiops-platform.
+
+components:
+  vllm:
+    enabled: true
+    gpu:
+      enabled: true
+      count: 1
+      # For Time-Slicing, we request "nvidia.com/gpu" usually.
+      # If using MIG or shared, this count ensures 1 unit is requested.
+  qdrant:
+      enabled: true
+
+agents:
+  # Base Image for Universal Agent
+  image:
+    repository: python
+    tag: 3.10-slim
+    pullPolicy: IfNotPresent
+
+  # Worker Configuration
+  worker:
+    memory: 512Mi
+    cpu: 500m
+  
+  # Supervisor Configuration
+  supervisor:
+    memory: 512Mi
+    cpu: 500m
+    model: "qwen"
+    temperature: 0.1
+
+rag:
+  enabled: true
+  qdrant_host: "qdrant.default:6333"
+  vllm_host: "vllm-server.default:8000"

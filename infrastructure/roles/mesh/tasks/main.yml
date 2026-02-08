@@ -1,0 +1,37 @@
+# roles/mesh/tasks/main.yml
+---
+- name: Download Istio CLI
+  shell: |
+    curl -L https://istio.io/downloadIstio | sh -
+    mv istio-*/bin/istioctl /usr/local/bin/
+  args:
+    creates: /usr/local/bin/istioctl
+
+- name: Install Istio Base
+  shell: istioctl install --set profile=ambient --skip-confirmation
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: istio_install
+  changed_when: "'Installation complete' in istio_install.stdout"
+
+- name: Label default namespace for Ambient Mesh
+  shell: kubectl label namespace default istio.io/dataplane-mode=ambient --overwrite
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: enable_mtls | default(true)
+
+- name: Create PeerAuthentication for Global mTLS
+  shell: |
+    kubectl apply -f - <<EOF
+    apiVersion: security.istio.io/v1beta1
+    kind: PeerAuthentication
+    metadata:
+      name: default
+      namespace: istio-system
+    spec:
+      mtls:
+        mode: STRICT
+    EOF
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: enable_mtls | default(true)

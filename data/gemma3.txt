@@ -1,0 +1,2 @@
+Gemma 3 is a high-performance open model family from Google.
+Gemma 3 1B is optimized for mobile and edge devices.

@@ -1,0 +1,30 @@
+---
+- name: "Phase 1: Common Setup (All Nodes)"
+  hosts: all
+  become: yes
+  vars_files:
+    - ../global_config.yml
+  roles:
+    - common
+
+- name: "Phase 2: Master Bootstrap"
+  hosts: masters
+  become: yes
+  vars_files:
+    - ../global_config.yml
+  roles:
+    - k8s
+    - network
+    - mesh
+    - app
+
+- name: "Phase 3: Worker Bootstrap"
+  hosts: workers
+  become: yes
+  vars_files:
+    - ../global_config.yml
+  vars:
+    # Workers need to know who the master is
+    master_ip: "{{ hostvars[groups['masters'][0]]['ansible_host'] }}"
+  roles:
+    - k8s

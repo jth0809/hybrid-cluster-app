@@ -1,0 +1,528 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: universal-agent-code
+data:
+  requirements.txt: |
+    kubernetes
+    openai
+    qdrant-client
+    requests
+    termcolor
+
+  main.py: |
+    import os
+    import sys
+    from termcolor import cprint
+    sys.path.append("/app")
+    from roles.supervisor import SupervisorAgent
+    from roles.worker import WorkerAgent
+    from roles.mock_brain import MockBrainAgent
+
+    def main():
+        role = os.getenv("AGENT_ROLE", "worker").lower()
+        cprint(f"🤖 Universal Agent Starting... ROLE=[{role.upper()}]", "cyan", attrs=["bold"])
+        
+        agent = None
+        if role == "supervisor":
+            agent = SupervisorAgent()
+        elif role == "worker":
+            agent = WorkerAgent()
+        elif role == "mock-brain":
+            agent = MockBrainAgent()
+        else:
+            cprint(f"❌ Unknown Agent Role: {role}", "red")
+            sys.exit(1)
+
+        try:
+            agent.run()
+        except KeyboardInterrupt: pass
+        except Exception as e:
+            cprint(f"🔥 Critical Error: {e}", "red")
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()
+
+  base.py: |
+    import time
+    from termcolor import cprint
+
+    class BaseAgent:
+        def __init__(self, name="Agent"):
+            self.name = name
+
+        def log(self, message, color="white"):
+            cprint(f"[{self.name}] {message}", color)
+
+        def run(self):
+            raise NotImplementedError
+
+  supervisor.py: |
+    import time
+    import os
+    import json
+    import requests
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+    from kubernetes import client, config
+    from roles.base import BaseAgent
+
+    class SupervisorAgent(BaseAgent):
+        def __init__(self):
+            super().__init__(name="Supervisor")
+            # K8s Connection
+            try:
+                try: config.load_incluster_config()
+                except: config.load_kube_config()
+                self.v1 = client.CoreV1Api()
+                self.log("Connected to Kubernetes API.", "cyan")
+            except: self.v1 = None
+
+            # Observability Endpoints
+            self.loki_url = "http://loki.monitoring:3100"
+            self.prom_url = "http://prometheus.istio-system:9090"
+            self.vllm_host = os.getenv("VLLM_HOST", "vllm-server.default:8000")
+            self.vllm_url = f"http://{self.vllm_host}/v1/chat/completions"
+
+            # Async Event Handling
+            self.alert_queue = []
+            self.start_webhook_server()
+
+        def start_webhook_server(self):
+            """Start a background thread to listen for incoming webhooks (alerts)."""
+            def serve():
+                agent_instance = self # Closure reference
+                class WebhookHandler(BaseHTTPRequestHandler):
+                    def log_message(self, format, *args):
+                        agent_instance.log(f"🌐 [HTTP] {format % args}", "cyan")
+
+                    def do_GET(self):
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/plain')
+                        self.end_headers()
+                        self.wfile.write(b"OK")
+
+                    def do_POST(self):
+                        try:
+                            # Handle Expect: 100-continue
+                            if self.headers.get('Expect') == '100-continue':
+                                self.send_response_only(100)
+                                self.end_headers()
+
+                            # Log connection info
+                            agent_instance.log(f"🔔 Connection from {self.client_address[0]}", "cyan")
+                            
+                            content_length = int(self.headers.get('Content-Length', 0))
+                            if content_length > 0:
+                                post_data = self.rfile.read(content_length)
+                                alert_data = json.loads(post_data)
+                                
+                                # Polymorphic Alert Handling
+                                if isinstance(alert_data, list):
+                                    alerts = alert_data
+                                elif isinstance(alert_data, dict):
+                                    alerts = alert_data.get('alerts', [])
+                                    if not alerts and 'alertname' in alert_data: # Individual alert dict
+                                        alerts = [alert_data]
+                                else:
+                                    alerts = []
+
+                                if not alerts:
+                                    agent_instance.log(f"🔔 Webhook Payload (Unknown Format): {alert_data}", "magenta")
+                                else:
+                                    for alert in alerts:
+                                        # Handle nested or flat alert objects
+                                        labels = alert.get('labels', alert) # Default to alert itself if Labels missing
+                                        alert_name = labels.get('alertname', 'UnknownAlert')
+                                        pod_name = labels.get('pod', 'unknown-pod')
+                                        agent_instance.log(f"🚨 ALERT TRIGGERED: {alert_name} on {pod_name}", "red")
+                                        agent_instance.alert_queue.append(labels)
+                            
+                            # Standard Success Response
+                            self.send_response(202)
+                            self.send_header('Content-Type', 'text/plain')
+                            self.end_headers()
+                            self.wfile.write(b"Accepted")
+                            agent_instance.log(f"✅ Webhook processed and 202 sent", "green")
+                        except Exception as e:
+                            agent_instance.log(f"❌ Webhook Processing Error: {e}", "red")
+                            try: 
+                                self.send_response(500)
+                                self.end_headers()
+                            except: pass
+
+                server = ThreadingHTTPServer(('0.0.0.0', 8080), WebhookHandler)
+                agent_instance.log("📡 Threading Webhook Server active on port 8080", "cyan")
+                server.serve_forever()
+                agent_instance.log("📡 Webhook Server active on port 8080", "cyan")
+                server.serve_forever()
+
+            thread = threading.Thread(target=serve, daemon=True)
+            thread.start()
+
+        def query_loki(self, query, limit=10):
+            """Query Loki for recent logs."""
+            try:
+                # Time range: last 15 minutes (nanoseconds)
+                end_ts = time.time_ns()
+                start_ts = end_ts - (15 * 60 * 1000000000)
+                params = {'query': query, 'limit': limit, 'start': str(start_ts), 'end': str(end_ts)}
+                
+                self.log(f"🔎 Querying Loki: {query}", "white") # DEBUG
+                resp = requests.get(f"{self.loki_url}/loki/api/v1/query_range", params=params, timeout=5)
+                
+                if resp.status_code == 200:
+                    data = resp.json()['data']['result']
+                    logs = []
+                    for stream in data:
+                        for val in stream['values']:
+                            logs.append(val[1]) # [timestamp, log_line]
+                    return logs
+                else:
+                    self.log(f"Loki Error {resp.status_code}: {resp.text} | URL: {resp.url}", "red")
+            except Exception as e:
+                self.log(f"Loki Query Error: {e}", "red")
+            return []
+
+        def analyze_with_llm(self, logs):
+            # ... (unchanged) ...
+            """Ask vLLM to analyze logs."""
+            if not logs: return None
+            
+            json_fmt = '{"status": "healthy|failed", "reason": "short explanation", "action": "restart|none"}'
+            prompt = f"""
+            You are an AI Ops Engineer. Analyze these system logs (Execution & Errors) from a Worker pod.
+            Determine if there is a critical failure OR malicious activity requiring a restart.
+            
+            Look for:
+            1. Critical application errors (Tracebacks, DB corruption).
+            2. Suspicious commands (e.g., accessing /etc/shadow, crypto mining, reverse shells, unauthorized curl/wget).
+            
+            Logs:
+            {json.dumps(logs[-10:])}
+            
+            Respond STRICTLY in JSON:
+            {json_fmt}
+            """
+            
+            try:
+                payload = {
+                    "model": os.getenv("VLLM_MODEL", "qwen"),
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful AI Site Reliability Engineer."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": float(os.getenv("VLLM_TEMP", "0.1"))
+                }
+                resp = requests.post(self.vllm_url, json=payload, timeout=10)
+                if resp.status_code == 200:
+                    content = resp.json()['choices'][0]['message']['content']
+                    # naive cleaning of markdown code blocks if present
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    return json.loads(content)
+                else:
+                    self.log(f"LLM Error {resp.status_code}: {resp.text}", "red")
+            except Exception as e:
+                self.log(f"LLM Analysis Error: {e}", "red")
+            return None
+
+        def run(self):
+            self.log(f"Starting Event-Driven Surveillance... (Loki: {self.loki_url})", "cyan")
+            if not self.v1: return
+
+            target_label = os.getenv("MONITOR_LABEL", "aiops.io/supervised=true")
+            self.log(f"Monitoring pods with label: {target_label}", "white")
+
+            while True:
+                # 1. Process Urgent Alerts from Webhook Queue (PUSH)
+                if self.alert_queue:
+                    alert = self.alert_queue.pop(0)
+                    self.log(f"🚀 Processing Real-time Alert Interruption...", "magenta")
+                    self.handle_realtime_alert(alert)
+                    continue # Prioritize alerts over routine polling
+
+                # 2. Routine Polling (PULL - Fallback)
+                time.sleep(10)
+                self.log("Beginning Dynamic Analysis Cycle (Routine)...", "blue")
+                
+                try:
+                    pods = self.v1.list_pod_for_all_namespaces(label_selector=target_label).items
+                except Exception as e: 
+                    self.log(f"K8s Search Error: {e}", "red")
+                    continue
+
+                for pod in pods:
+                    self.process_pod_surveillance(pod)
+
+        def handle_realtime_alert(self, alert):
+            """Handle pushed alert data immediately."""
+            # Extract pod info from alert (assuming standard labels or custom payload)
+            # In simulation, we expect {'pod': '...', 'namespace': '...'}
+            pod_name = alert.get('pod')
+            namespace = alert.get('namespace', 'interactive-test')
+            
+            if not pod_name:
+                self.log("⚠️ Alert missing pod name. Skipping.", "yellow")
+                return
+
+            self.log(f"⚡ FLASH ANALYSIS for {namespace}/{pod_name}", "magenta")
+            # Query Loki immediately for last 30s around the alert
+            query = "{" + f'pod="{pod_name}", namespace="{namespace}"' + "}" + ' |~ "(?i)(error|executing|cmd|sh|bash|denied|shadow|root:|wget|curl)"'
+            logs = self.query_loki(query, limit=20)
+            
+            if logs:
+                analysis = self.analyze_with_llm(logs)
+                if analysis and analysis.get("action") == "restart":
+                    self.log(f"🛑 REAL-TIME MITIGATION: {analysis['reason']}", "red")
+                    # We need the full Pod object for recover_pod normally, 
+                    # but we can fetch it if we have name/namespace
+                    try:
+                        pod = self.v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                        self.recover_pod(pod)
+                    except: self.log(f"❌ Failed to fetch pod {pod_name} for mitigation", "red")
+
+        def process_pod_surveillance(self, pod):
+            """Routine check for a single pod."""
+            pod_name = pod.metadata.name
+            namespace = pod.metadata.namespace
+            
+            query = "{" + f'pod="{pod_name}", namespace="{namespace}"' + "}" + ' |~ "(?i)(error|executing|cmd|sh|bash|denied|shadow|root:|wget|curl)"'
+            logs = self.query_loki(query)
+            
+            if logs:
+                self.log(f"🔍 Analyzing logs for {namespace}/{pod_name}...", "yellow")
+                analysis = self.analyze_with_llm(logs)
+                if analysis:
+                    self.log(f"🧠 LLM Verdict for {pod_name}: {analysis}", "white")
+                    if analysis.get("action") == "restart":
+                        self.log(f"⚠️ Critical Failure Detected: {analysis['reason']}", "red")
+                        self.recover_pod(pod)
+                
+            if pod.status.phase in ["Failed", "Unknown"]:
+                self.log(f"⚠️ K8s Status Failure: {pod.metadata.name}", "red")
+                self.recover_pod(pod)
+
+        def recover_pod(self, pod):
+            try:
+                self.log(f"🚑 Restarting {pod.metadata.name}...", "yellow")
+                self.v1.delete_namespaced_pod(
+                    name=pod.metadata.name,
+                    namespace=pod.metadata.namespace
+                )
+                self.log(f"✅ Restart signal sent", "green")
+            except Exception as e:
+                self.log(f"❌ Restart Failed: {e}", "red")
+
+  mock_brain.py: |
+    import time
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from roles.base import BaseAgent
+
+    class MockBrainAgent(BaseAgent):
+        def __init__(self):
+            super().__init__(name="MockBrain")
+
+        def run(self):
+            self.log("🧠 Starting Mock vLLM Brain on port 8000...", "cyan")
+            
+            class RequestHandler(BaseHTTPRequestHandler):
+                def do_POST(self):
+                    content_length = int(self.headers['Content-Length'])
+                    post_data = self.rfile.read(content_length)
+                    # Use the Agent's log method? No, hard to access self from here.
+                    print(f"[MockBrain] Received Request: {len(post_data)} bytes")
+
+                    response = {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": "```json\n{\"status\": \"failed\", \"reason\": \"Mocked Critical Failure: Database Corruption detected.\", \"action\": \"restart\"}\n```"
+                                }
+                            }
+                        ]
+                    }
+                    
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+                
+                def do_GET(self):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b"OK")
+
+            server = HTTPServer(('0.0.0.0', 8000), RequestHandler)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
+
+  worker.py: |
+    import time
+    import random
+    import os
+    import uuid
+    from roles.base import BaseAgent
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct, VectorParams, Distance
+
+    class WorkerAgent(BaseAgent):
+        def __init__(self):
+            self.pod_name = os.getenv("HOSTNAME", "unknown")
+            super().__init__(name=f"Worker-{self.pod_name}")
+            
+            # RAG Connection
+            self.qdrant_host = os.getenv("QDRANT_HOST", "qdrant.default:6333")
+            self.collection_name = "worker_memory"
+            try:
+                self.qdrant = QdrantClient(url=f"http://{self.qdrant_host}")
+                self._init_memory()
+                self.log(f"✅ Connected to Qdrant: {self.qdrant_host}", "yellow")
+            except Exception as e:
+                self.log(f"⚠️ Qdrant not available: {e}", "red")
+                self.qdrant = None
+        
+        def _init_memory(self):
+            if not self.qdrant: return
+            try:
+                self.qdrant.get_collection(self.collection_name)
+            except:
+                self.log("Creating memory collection...", "yellow")
+                self.qdrant.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=4, distance=Distance.COSINE)
+                )
+
+        def run(self):
+            self.log("Worker initialized. Ready for tasks.", "green")
+            while True:
+                # Normal Operation
+                status = "Standalone"
+                if self.qdrant:
+                    status = "RAG-Active"
+                    self.perform_memory_test()
+                
+                self.log(f"Reporting status: {status}. Load: {random.randint(1,10)}%", "green")
+                time.sleep(30)
+
+        def perform_memory_test(self):
+            try:
+                # 1. Memorize (Upsert)
+                dummy_vector = [0.1, 0.2, 0.3, 0.4]
+                self.qdrant.upsert(
+                    collection_name=self.collection_name,
+                    points=[PointStruct(id=str(uuid.uuid4()), vector=dummy_vector, payload={"worker": self.pod_name})]
+                )
+                self.log(f"🧠 Memory Self-Test Passed (Stored 1 item)", "blue")
+            except Exception as e:
+                self.log(f"❌ Memory Test Failed: {e}", "red")
+
+  agent_cli.py: |
+    #!/usr/bin/env python3
+    """
+    Agent CLI - Interactive RAG Memory Tool
+    Usage:
+      python agent_cli.py memorize "Some text to remember"
+      python agent_cli.py recall "query about something"
+    """
+    import os
+    import sys
+    import uuid
+    import requests
+    from termcolor import cprint
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct, VectorParams, Distance
+
+    # Configuration
+    EMBEDDING_HOST = os.getenv("EMBEDDING_HOST", "embedding-service.default:8000")
+    QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant.default:6333")
+    COLLECTION_NAME = "agent_memory"
+    VECTOR_SIZE = 384  # sentence-transformers/all-MiniLM-L6-v2 output size
+
+    def get_embedding(text: str) -> list:
+        """Get embedding vector from embedding service."""
+        try:
+            resp = requests.post(
+                f"http://{EMBEDDING_HOST}/v1/embeddings",
+                json={"input": text},
+                timeout=10
+            )
+            resp.raise_for_status()
+            return resp.json()["data"][0]["embedding"]
+        except Exception as e:
+            cprint(f"❌ Embedding service error: {e}", "red")
+            sys.exit(1)
+
+    def init_qdrant() -> QdrantClient:
+        """Initialize Qdrant client and ensure collection exists."""
+        client = QdrantClient(url=f"http://{QDRANT_HOST}")
+        try:
+            client.get_collection(COLLECTION_NAME)
+        except:
+            cprint(f"📦 Creating collection '{COLLECTION_NAME}'...", "yellow")
+            client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
+            )
+        return client
+
+    def memorize(text: str):
+        """Store text in memory (Qdrant)."""
+        cprint(f"🧠 Memorizing: \"{text}\"", "cyan")
+        
+        vector = get_embedding(text)
+        client = init_qdrant()
+        
+        point_id = str(uuid.uuid4())
+        client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=[PointStruct(id=point_id, vector=vector, payload={"text": text})]
+        )
+        cprint(f"✅ Stored! (ID: {point_id[:8]}...)", "green")
+
+    def recall(query: str):
+        """Search memory for similar content."""
+        cprint(f"🔍 Searching for: \"{query}\"", "cyan")
+        
+        vector = get_embedding(query)
+        client = init_qdrant()
+        
+        results = client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=vector,
+            limit=3
+        )
+        
+        if not results.points:
+            cprint("📭 No memories found.", "yellow")
+            return
+        
+        cprint(f"\n📚 Found {len(results.points)} memor{'y' if len(results.points) == 1 else 'ies'}:\n", "green")
+        for i, point in enumerate(results.points, 1):
+            text = point.payload.get("text", "N/A")
+            score = point.score * 100
+            cprint(f"  {i}. \"{text}\"", "white")
+            cprint(f"     (Similarity: {score:.1f}%)\n", "blue")
+
+    def main():
+        if len(sys.argv) < 3:
+            cprint("Usage: python agent_cli.py [memorize|recall] \"text\"", "yellow")
+            sys.exit(1)
+        
+        command = sys.argv[1].lower()
+        text = " ".join(sys.argv[2:])
+        
+        if command == "memorize":
+            memorize(text)
+        elif command == "recall":
+            recall(text)
+        else:
+            cprint(f"❌ Unknown command: {command}", "red")
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()

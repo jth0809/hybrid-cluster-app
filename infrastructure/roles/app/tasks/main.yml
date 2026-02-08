@@ -1,0 +1,16 @@
+# roles/app/tasks/main.yml
+---
+- name: Install Helm
+  shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Deploy AIOPS Platform Chart
+  shell: |
+    helm upgrade --install aiops-platform ../../charts/aiops-platform \
+      --namespace default \
+      --set agents.image.tag={{ agents.image_tag }} \
+      --set agents.worker.memory={{ agents.worker_memory_limit }} \
+      --set rag.enabled={{ agents.rag_enabled }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
