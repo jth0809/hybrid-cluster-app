@@ -55,7 +55,10 @@ graph TD
 *   **Plug-n-Play Extensibility**: `worker-agent` 코드를 수정하지 않고도, MCP 서버에 새로운 툴(Slack, GitHub, Postgres 등)을 등록하기만 하면 즉시 능력이 확장되는 아키텍처를 구현했습니다.
 *   **Security Boundary**: 툴 실행 권한을 MCP 서버 레벨에서 격리하여, 에이전트의 오작동이 시스템 전체로 전파되는 것을 물리적으로 차단합니다.
 
-### 🚀 Advanced Networking (Cilium & eBPF)
+### 🚀 Advanced Networking (Cilium & Istio Ambient Mesh)
+*   **Sidecar-less Service Mesh**: Istio Ambient Mode를 도입하여, 기존 사이드카 패턴(Envoy Injection)의 리소스 오버헤드와 복잡성을 제거했습니다.
+    *   **Ztunnel**: 노드 레벨에서 mTLS와 L4 보안을 투명하게 처리 (No Pod Restart required).
+    *   **Waypoint Proxy**: 필요한 경우에만 L7(HTTP) 정책을 적용하여 리소스 효율성 극대화.
 *   **eBPF 파워**: Cilium CNI를 통해 전통적인 iptables의 오버헤드를 제거하고, 커널 레벨에서 고성능 패킷 처리를 구현했습니다.
 *   **Hubble 가시성**: L3/L4 레벨의 네트워크 흐름을 실시간으로 추적하여, 에이전트 간의 정식 통신 여부를 시각적으로 감시합니다.
 
