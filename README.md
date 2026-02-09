@@ -3,7 +3,7 @@
 > **⚠️ Note**: This project is a **Technical Prototype (PoC)** designed to validate the feasibility of integrating On-Premise GPU resources with Cloud-Native orchestration for autonomous security operations. It is not a commercial product.
 
 ## 1. Project Overview
-단일 클라우드를 넘어 **OCI(Oracle Cloud)와 On-Premise(Home/WSL2)를 통합**하고, **eBPF 기반의 고성능 네트워킹**과 **AI 자율 판단**이 결합된 하이브리드 AIOps 시스템의 프로토타입을 구축 및 검증했습니다.
+단일 클라우드를 넘어 **OCI(Oracle Cloud)와 On-Premise(Home/WSL2)를 통합**하고, **eBPF 기반의 고성능 네트워킹**과 **AI 자율 판단**이 결합된 하이브리드 AIOps 시스템의 프로토타입을 구축했습니다.
 
 ## 2. Hybrid-Cloud Architecture (The Big Picture)
 
@@ -53,7 +53,7 @@ graph TD
 *   **보안 전송**: 클라우드 간 통신은 커널 레벨의 초고속 암호화 터널을 통과하여 비인과적인 외부 접근으로부터 안전합니다.
 
 ### 🔌 Universal Connectivity (Model Context Protocol - MCP)
-*   **"The USB for AI"**: Anthropic이 제안한 MCP 표준을 조기 도입하여, AI 에이전트(두뇌)와 도구(손발)를 완벽하게 분리했습니다.
+*   **"The USB for AI"**: Anthropic이 제안한 MCP 표준을 도입하여, AI 에이전트와 도구를 분리했습니다.
 *   **Plug-n-Play Extensibility**: `worker-agent` 코드를 수정하지 않고도, MCP 서버에 새로운 툴(Slack, GitHub, Postgres 등)을 등록하기만 하면 즉시 능력이 확장되는 아키텍처를 구현했습니다.
 *   **Security Boundary**: 툴 실행 권한을 MCP 서버 레벨에서 격리하여, 에이전트의 오작동이 시스템 전체로 전파되는 것을 물리적으로 차단합니다.
 
@@ -64,34 +64,20 @@ graph TD
 *   **eBPF 파워**: Cilium CNI를 통해 전통적인 iptables의 오버헤드를 제거하고, 커널 레벨에서 고성능 패킷 처리를 구현했습니다.
 *   **Hubble 가시성**: L3/L4 레벨의 네트워크 흐름을 실시간으로 추적하여, 에이전트 간의 정식 통신 여부를 시각적으로 감시합니다.
 
-### 📊 Integrated Observability (Grafana)
-*   **Single Pane of Glass**: 수퍼바이저의 위협 판독 결과(Flash Analysis)와 워커 에이전트의 상태를 실시간 시각화하는 커스텀 Grafana 대시보드 구축.
-*   **RAG & Memory Visualization**: 에이전트의 장기 기억(Vector DB) 상태와 AI의 추론 과정을 투명하게 모니터링.
-
 ### 🛡️ Autonomous Security Loop (Active Defense Prototype)
-*   **Event-Driven Response**: Loki Ruler와 수퍼바이저의 웹훅을 연동하여, 위협 감지 시 **자동 분석(Flash Analysis)**이 시작되는 실시간 대응 체계를 구현했습니다.
+*   **Event-Driven Response**: Loki Ruler와 수퍼바이저의 웹훅을 연동하여, 위협 감지 시 자동 분석이 시작되는 실시간 대응 체계를 구현했습니다.
 *   **Red Team Verification**: 실제 공격 시나리오를 통해 방어 메커니즘을 테스트했습니다.
-    *   **권한 탈취 시도**: `read_system_secret` 도구 호출 시 RBAC에 의해 **즉시 차단(Block)**됨을 확인.
-    *   **기밀 유출 감지**: 코드 취약점으로 인해 데이터가 유출될 경우, Supervisor가 **60초 내에 해당 에이전트를 사살(Kill)**하여 피해 확산을 물리적으로 차단.
-    *   **Prompt Injection**: LLM의 검열 우회 시도(API Key 유출)에 대해 사후 탐지 및 격리 프로세스 가동.
+    *   **권한 탈취 시도**: `read_system_secret` 도구 호출 시 RBAC에 의해 즉시 차단됨을 확인.
+    *   **기밀 유출 감지**: 코드 취약점으로 인해 데이터가 유출될 경우, Supervisor가 60초 내에 해당 에이전트를 사살하여 피해 확산을 물리적으로 차단.(취약점은 그대로 있기 때문에 추가 대응 필요)
 
 ### 🧠 Real-time Intelligence (Local vLLM)
-*   **Private AI Engine**: 클라우드 API(OpenAI 등)에 의존하지 않고, 로컬 GPU(NVIDIA L4)에 **Qwen2.5-7B** 모델을 직접 서빙하여 데이터 주권을 확보했습니다.
-*   **Zero-Latency Networking**: Kubernetes Service Mesh 내부에서 AI(vLLM)와 에이전트가 통신하므로, 외부 홉(Hop) 없이 초저지연 추론이 가능합니다.
-
-### ⚖️ Competitive Advantage (Market Comparison)
-| Feature | AIOps Platform (Ours) | K8sGPT / Robusta |
-| :--- | :--- | :--- |
-| **Model Context Protocol** | ✅ **Native Support** (First-mover) | ❌ Custom Plugins only |
-| **Security Posture** | ✅ **Active Defense** (Kill Switch) | ⚠️ Passive Monitoring (Alerting) |
-| **AI Privacy** | ✅ **100% On-Premise** (vLLM) | ⚠️ SaaS Dependant (OpenAI API) |
-| **Architecture** | ✅ **Autonomous Agents** (Worker + Supervisor) | ⚠️ Operator / ChatBot pattern |
+*   **Private AI Engine**: 클라우드 API(OpenAI 등)에 의존하지 않고, 로컬 GPU(NVIDIA L4)에 **Qwen2.5-3B** 모델을 직접 서빙.
 
 ## 4. Technical Innovations & Versatility
-*   **Hybrid RAG Pipeline**: 클라우드의 제어력과 로컬의 자원(GPU)을 결합한 최적화된 RAG 시스템.
-*   **Pluggable Agent Architecture**: 표준 라벨링 프로토콜을 통해 Nginx, Python App, Go Microservice 등 어떠한 워크로드도 AI Ops의 보호를 받을 수 있는 높은 범용성 제공.
-*   **Self-Healing Infrastructure**: AI가 스스로 보안 위협을 판단하고 파드를 정화(재시작)하는 자가 치유 시스템.
+*   **Hybrid RAG Pipeline**: 클라우드와 로컬의 자원(GPU)을 결합한 RAG 시스템.
+*   **Pluggable Agent Architecture**: 표준 라벨링 프로토콜을 통해 Nginx, Python App, Go Microservice 등 어떠한 워크로드도 AI Ops의 보호를 받을 수 있는 범용성.
+*   **Self-Healing Infrastructure**: AI가 스스로 판단하고 파드를 재시작
 
 ## 5. Project Conclusion
 본 프로젝트를 통해 **"AI + Security + Hybrid Cloud"** 기술의 통합 가능성을 성공적으로 입증했습니다.
-프로토타이핑 결과, **MCP를 통한 확장성**과 **Supervisor를 통한 자율 보안**이 레거시 운영 환경을 대체할 수 있는 강력한 대안임을 확인했습니다.
+프로토타이핑 결과, **MCP를 통한 확장성**과 **Supervisor를 통한 자율 보안**이 가능함을 확인했습니다.
